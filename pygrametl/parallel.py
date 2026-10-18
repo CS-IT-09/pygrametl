@@ -40,8 +40,9 @@ try:
 except ImportError:
     from queue import Empty  # Python 3
 
-if sys.platform.startswith("java"):
-    # Jython specific code in jythonmultiprocessing
+if sys.platform.startswith("java") or os.environ.get("PYGRAMETL_THREADS") == "1":
+    # Threads insted of processes: always on Jython, and on Cpython when
+    # requested with PYGRAMETL_THREADS=1 (meant for free threaded builds) 
     import pygrametl.jythonmultiprocessing as multiprocessing
 else:
     # Use (C)Python's std. lib.
@@ -89,6 +90,16 @@ def _getexitfunction():
             java.lang.System.exit(1)
 
         return javaexitfunction
+
+    # In thread mode all workers are threads in this process, so exiting the 
+    # process halts everything 
+    if os.environ.get("PYGRAMETL_THREADS") == "1":
+
+        def threadexitfunction():
+            sys.stderr.flush()
+            os._exit(1)
+
+        return threadexitfunction
 
     # else see if the os module provides functions to kill process groups;
     # this should be the case on UNIX.
@@ -156,6 +167,19 @@ def _getexcepthook():
         exit()
 
     return excepthook
+
+if os.environ.get("PYGRAMETL_THREADS") == "1" and not sys.platform.startswith("java"):
+    # sys.exceptook is not used for uncaught exceptions in threads, so
+    # threading.excepthook is set to make them halt the exection as well
+    import threading 
+
+    def _threadexcepthook(args):
+        if args.exc_type is SystemExit:
+            return 
+        _getexcepthook()(args.exc_type, args.exc_value, args.exc_traceback)
+
+    threading.excepthook = _threadexcepthook
+
 
 
 # Stuff for @splitpoint

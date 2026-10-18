@@ -1,6 +1,8 @@
-"""A module for Jython emulating (a small part of) CPython's multiprocessing.
+"""A module emulating (a small part of) CPython's multiprocessing with threads.
 With this, pygrametl can be made to use multiprocessing, but actually use
-threads when used from Jython (where there is no GIL).
+threads. This is always the case on Jython (where there is no GIL). On CPython,
+it is used when the environment variable PYGRAMETL_THREADS is set to 1, which
+is intended for free-threaded builds where threads can run in parallel.
 """
 
 # Copyright (c) 2011-2020, Aalborg University (pygrametl@cs.aau.dk)
@@ -27,10 +29,18 @@ threads when used from Jython (where there is no GIL).
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import sys 
 from threading import Thread
 
-from pygrametl.jythonsupport import Value
+try:
+    from pygrametl.jythonsupport import Value # A Java class, only on Jython 
+except ImportError:
 
+    class Value(object):
+        """Stands in for multiprocessing. Value when used on Cpython."""
+
+        def __init__(self, typecode, value=0):
+            self.value = value
 
 # Needed for both pip2 and pip3 to be supported
 try:
@@ -38,15 +48,16 @@ try:
 except ImportError:
     from queue import Queue
 
-# NOTE: This module is made for Jython.
+# NOTE: This module is made for Jython and is also used for threads on Cpython.
 
 __all__ = ["JoinableQueue", "Process", "Queue", "Value"]
 
 
 class Process(Thread):
     pid = "<n/a>"
-    daemon = property(Thread.isDaemon, Thread.setDaemon)
-    name = property(Thread.getName, Thread.setName)
+    if sys.platform.startswith("java"):
+        daemon = property(Thread.isDaemon, Thread.setDaemon)
+        name = property(Thread.getName, Thread.setName)
 
 
 class JoinableQueue(Queue):

@@ -28,6 +28,7 @@ provide dicts that map from attribute names to attribute values.
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from csv import DictReader
+import os
 import sys
 
 import pygrametl
@@ -39,8 +40,12 @@ if sys.platform.startswith("java"):
     # Jython specific code
     from pygrametl.jythonmultiprocessing import Queue, Process
 else:
-    from multiprocessing import Queue, Process
     import sqlite3  # Only used by SQLTransformingSource
+
+    if os.environ.get("PYGRAMETL_THREADS") == "1":
+        from pygrametl.jythonmultiprocessing import Queue, Process
+    else:
+        from multiprocessing import Queue, Process
 
 try:
     from Queue import Empty  # Python 2
