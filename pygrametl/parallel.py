@@ -40,23 +40,50 @@ try:
 except ImportError:
     from queue import Empty  # Python 3
 
-if sys.platform.startswith("java") or os.environ.get("PYGRAMETL_THREADS") == "1":
-    # Threads insted of processes: always on Jython, and on Cpython when
-    # requested with PYGRAMETL_THREADS=1 (meant for free threaded builds) 
+if sys.platform.startswith("java"):
+    # Jython specific code in jythonmultiprocessing
     import pygrametl.jythonmultiprocessing as multiprocessing
 else:
     # Use (C)Python's std. lib.
-    import multiprocessing
+    import multiprocessing as _processes
 
     # This module assumes processes inherit state through fork. Thus, it
     # requires that the platform supports the fork start method. The start
     # method is not set to fork when Sphinx is building the documentation as it
     # prevents Windows from doing so
     if (
-        multiprocessing.get_start_method(allow_none=True) != "fork"
+        _processes.get_start_method(allow_none=True) != "fork"
         and os.environ.get("SPHINX_BUILD") != "1"
     ):
-        multiprocessing.set_start_method("fork")
+        _processes.set_start_method("fork")
+
+    # On CPython, threads are used if the GIL is disabled (free-threaded
+    # CPython 3.13 or newer) and processes otherwise. This is decided the first
+    # time a parallel construct is used, and not when this module is imported,
+    # because an imported C extension can turn the GIL on or off in between.
+    _threadmode = None
+
+    def _usethreads():
+        gilenabled = getattr(sys, "_is_gil_enabled", None)
+        return gilenabled is not None and not gilenabled()
+
+    class _Backend(object):
+        """Stands in for the multiprocessing module until it is first used,
+        then replaces itself with the threads or the processes module."""
+
+        def __getattr__(self, name):
+            global multiprocessing, _threadmode
+            _threadmode = _usethreads()
+            if _threadmode:
+                import pygrametl.threadmultiprocessing as backend
+
+                _setthreadexcepthook()
+            else:
+                backend = _processes
+            multiprocessing = backend
+            return getattr(backend, name)
+
+    multiprocessing = _Backend()
 
 __all__ = [
     "splitpoint",
@@ -91,16 +118,16 @@ def _getexitfunction():
 
         return javaexitfunction
 
-    # In thread mode all workers are threads in this process, so exiting the 
-    # process halts everything 
-    if os.environ.get("PYGRAMETL_THREADS") == "1":
+    # In thread mode all workers are threads in this process, so exiting the
+    # process halts everything
+    if _threadmode:
 
         def threadexitfunction():
             sys.stderr.flush()
             os._exit(1)
 
         return threadexitfunction
-
+    
     # else see if the os module provides functions to kill process groups;
     # this should be the case on UNIX.
     import signal
@@ -168,19 +195,17 @@ def _getexcepthook():
 
     return excepthook
 
-if os.environ.get("PYGRAMETL_THREADS") == "1" and not sys.platform.startswith("java"):
-    # sys.exceptook is not used for uncaught exceptions in threads, so
-    # threading.excepthook is set to make them halt the exection as well
-    import threading 
+def _setthreadexcepthook():
+    # sys.excepthook is not used for uncaught exceptions in threads, so
+    # threading.excepthook is set to make them halt the execution as well
+    import threading
 
     def _threadexcepthook(args):
         if args.exc_type is SystemExit:
-            return 
+            return
         _getexcepthook()(args.exc_type, args.exc_value, args.exc_traceback)
 
     threading.excepthook = _threadexcepthook
-
-
 
 # Stuff for @splitpoint
 

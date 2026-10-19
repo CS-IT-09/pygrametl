@@ -28,24 +28,15 @@ provide dicts that map from attribute names to attribute values.
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from csv import DictReader
-import os
 import sys
 
 import pygrametl
 from pygrametl import tables
 from pygrametl import ConnectionWrapper
+from pygrametl import parallel as _parallel  # chooses threads or processes
 
-
-if sys.platform.startswith("java"):
-    # Jython specific code
-    from pygrametl.jythonmultiprocessing import Queue, Process
-else:
+if not sys.platform.startswith("java"):
     import sqlite3  # Only used by SQLTransformingSource
-
-    if os.environ.get("PYGRAMETL_THREADS") == "1":
-        from pygrametl.jythonmultiprocessing import Queue, Process
-    else:
-        from multiprocessing import Queue, Process
 
 try:
     from Queue import Empty  # Python 2
@@ -254,8 +245,8 @@ class ProcessSource(object):
             raise ValueError("batchsize must be a positive integer")
         self.__source = source
         self.__batchsize = batchsize
-        self.__queue = Queue(queuesize)
-        p = Process(target=self.__worker)
+        self.__queue = _parallel.multiprocessing.Queue(queuesize)
+        p = _parallel.multiprocessing.Process(target=self.__worker)
         p.name = "Process for ProcessSource"
         p.start()
 
@@ -766,7 +757,7 @@ class DynamicForEachSource(object):
           be iterated by this source. the function is called once for every
           element in seq.
         """
-        self.__queue = Queue()  # a multiprocessing.Queue
+        self.__queue = _parallel.multiprocessing.Queue()
         if not callable(callee):
             raise TypeError("callee must be callable")
         self.__callee = callee
