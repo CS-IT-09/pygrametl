@@ -64,6 +64,20 @@ else:
     _threadmode = None
 
     def _usethreads():
+        """Return True if threads should be used instead of processes.
+
+        PYGRAMETL_PARALLEL can be threads, processes, or auto (the default).
+        With auto, threads are used if the GIL is disabled (free-threaded
+        CPython 3.13 or newer) and processes otherwise.
+        """
+        mode = os.environ.get("PYGRAMETL_PARALLEL", "auto")
+        if mode == "threads":
+            return True
+        if mode == "processes":
+            return False
+        if mode != "auto":
+            raise ValueError("PYGRAMETL_PARALLEL must be auto, threads, or processes")
+        
         gilenabled = getattr(sys, "_is_gil_enabled", None)
         return gilenabled is not None and not gilenabled()
 
