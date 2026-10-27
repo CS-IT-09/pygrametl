@@ -19,9 +19,7 @@ class Queue(queue.Queue):
         pass
 
 
-class JoinableQueue(Queue):
-    pass
-
+JoinableQueue = Queue 
 
 class Value(object):
     def __init__(self, typecode, value=0):
