@@ -24,15 +24,17 @@
 
 import unittest
 
-from tests import utilities
 import pygrametl
 import pygrametl.drawntabletesting as dtt
-from pygrametl.tables import Dimension
-from pygrametl.tables import CachedDimension
-from pygrametl.tables import BulkDimension
-from pygrametl.tables import CachedBulkDimension
-from pygrametl.tables import SlowlyChangingDimension
-from pygrametl.tables import SnowflakedDimension
+from pygrametl.tables import (
+    BulkDimension,
+    CachedBulkDimension,
+    CachedDimension,
+    Dimension,
+    SlowlyChangingDimension,
+    SnowflakedDimension,
+)
+from tests import utilities
 
 
 class DimensionTest(unittest.TestCase):
@@ -124,6 +126,10 @@ class DimensionTest(unittest.TestCase):
         self.initial.reset()
         self.connection_wrapper = pygrametl.getdefaulttargetconnection()
         self.test_dimension = self.get_test_dimension_instance()
+
+    @classmethod
+    def tearDownClass(cls):
+        utilities.close_default_connection_wrapper()
 
     # Get an instance of the class being tested by this TestCase
     def get_test_dimension_instance(self, **specifics):
@@ -291,7 +297,7 @@ class DimensionTest(unittest.TestCase):
         # subset of the attributes. So the namemapping cannot be passed directly
         namemapping = {}
         for key, value in self.namemapping.items():
-            if value in vals_namemapped.keys():
+            if value in vals_namemapped:
                 namemapping[key] = value
 
         rows = self.test_dimension.getbyvals(vals_namemapped, namemapping=namemapping)
@@ -1753,6 +1759,36 @@ class SlowlyChangingDimensionTest(DimensionTest):
 
         postcondition = self.initial + "| 99 | Charlie | 30 | Copenhagen | 1 |"
         postcondition.assertEqual()
+
+
+class SlowlyChangingDimensionNoCacheTest(SlowlyChangingDimensionTest):
+    def setUp(self):
+        utilities.ensure_default_connection_wrapper()
+        self.initial.reset()
+        self.connection_wrapper = pygrametl.getdefaulttargetconnection()
+        self.test_dimension = SlowlyChangingDimension(
+            name=self.initial.name,
+            key=self.initial.key(),
+            attributes=self.initial.attributes,
+            lookupatts=["name"],
+            versionatt="version",
+            fromatt="fromdate",
+            toatt="todate",
+            type1atts=["age"],
+            srcdateatt="from",
+            cachesize=0,
+        )
+
+        self.scdimension = SlowlyChangingDimension(
+            name=self.initial.name,
+            key=self.initial.key(),
+            attributes=self.initial.attributes,
+            lookupatts=["name", "age"],
+            versionatt="version",
+            fromatt="fromdate",
+            srcdateatt="from",
+            cachesize=0,
+        )
 
 
 class SnowflakedDimensionTest(unittest.TestCase):

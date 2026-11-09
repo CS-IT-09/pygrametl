@@ -1,3 +1,22 @@
+Unreleased
+----------
+**Added**
+  ``UnpivotingSource`` a new class that adds support for reshaping
+  wide rows into long rows. (Thanks to Huu Hung Nguyen)
+
+**Fixed**
+  A ``cachesize`` of 0 could lead to an ``AttributeError`` in
+  ``SlowlyChangingDimension`` (GitHub issue #98).
+
+  A race condition in ``SharedConnectionWrapperClient.commit()`` due to
+  ``JoinableQueue`` not guaranteeing a FIFO order when multiple processes write
+  to it. Thus, tasks added by ``endload()`` were sometimes placed after commit
+  in the queue, i.e., some inserts and updates did not get committed.
+
+**Changed**
+  Changed the two exceptions that ``createflow()`` can raised from ``ValueError``
+  to ``TypeError`` to satisfy the new lints in Ruff 0.16.x (GitHub issue #97)
+
 Version 2.9
 -----------
 **Added**
@@ -25,7 +44,7 @@ Version 2.9
   All uses of ``open()`` in the beginner guide now include "utf-8" to minimize
   the chance of errors due to different encodings.
 
-  ``dependson`` is now a list instead of a filter iterator. This fixes issue #72 
+  ``dependson`` is now a list instead of a filter iterator. This fixes issue #72
   where dependencies were only loaded in the first bulk load.
 
   ``MappingSource`` no longer duplicates rows when passing multiple callables.
@@ -36,9 +55,9 @@ Version 2.9
 
   ``SQLSource`` now has a ``fetchsize`` constructor parameter so the end-user can
   control how much data should be held in main memory for each round trip to the RDBMS.
-  
-  Changed psycopg2 bulkloader documentation to use ``copy_expert`` instead of 
-  ``copy_from``. This solves issue #74, where newer psycopg2 versions escape 
+
+  Changed psycopg2 bulkloader documentation to use ``copy_expert`` instead of
+  ``copy_from``. This solves issue #74, where newer psycopg2 versions escape
   table names to avoid sql injection.
 
   Removed the ``getlong()`` function from ``pygrametl/__init__.py`` as

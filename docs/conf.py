@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # pygrametl documentation build configuration file, created by
 # sphinx-quickstart2 on Thu Nov 14 21:04:01 2013.
@@ -14,8 +13,8 @@
 
 # -- Interpreter configuration -------------------------------------------
 
-import sys
 import os
+import sys
 from os.path import abspath, dirname
 
 # Make sure we get this copy of pygrametl, and not one on the system
@@ -60,7 +59,7 @@ master_doc = "index"
 
 # General information about the project.
 project = "pygrametl"
-copyright = "2009 - 2023, Aalborg University"
+copyright = "2009 - 2026, Aalborg University"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

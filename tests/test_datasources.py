@@ -28,9 +28,10 @@ import unittest
 import pygrametl
 import pygrametl.drawntabletesting as dtt
 from pygrametl.datasources import (
-    SQLSource,
     MappingSource,
+    SQLSource,
     SQLTransformingSource,
+    UnpivotingSource,
 )
 from tests import utilities
 
@@ -57,6 +58,10 @@ class SQLSourceTest(unittest.TestCase):
         cls.names = list(cls.initial[0].keys())
         cls.initial.ensure()
         cls.query = "SELECT * FROM book"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.connection_wrapper.close()
 
     def assert_all_rows_and_columns_returned(self, sql_source, names):
         row_counter = 0
@@ -232,24 +237,88 @@ class SQLTransformationSourceTest(unittest.TestCase):
         self.assertEqual(expected_group_by_genre_renamed, list(source))
 
     def test_transform_with_pep_connection(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
         source = SQLTransformingSource(
             iter(self.input_list),
             "book",
             "SELECT genre, COUNT(title) FROM book GROUP BY genre",
-            targetconnection=sqlite3.connect(":memory:"),
+            targetconnection=connection,
         )
 
         self.assertIsNone(pygrametl.getdefaulttargetconnection())
         self.assertEqual(self.expected_group_by_genre, list(source))
 
     def test_transform_with_connection_wrapper(self):
+        connection_wrapper = utilities.ensure_default_connection_wrapper()
+        self.addCleanup(connection_wrapper.close)
         source = SQLTransformingSource(
             iter(self.input_list),
             "book",
             "SELECT genre, COUNT(title) FROM book GROUP BY genre",
-            targetconnection=utilities.ensure_default_connection_wrapper(),
+            targetconnection=connection_wrapper,
         )
 
         # Ensure this test does not affect the other tests even if it fails
         utilities.remove_default_connection_wrapper()
         self.assertEqual(self.expected_group_by_genre, list(source))
+
+
+class UnpivotingSourceTest(unittest.TestCase):
+    def test_unpivot_with_explicit_attributes(self):
+        source = UnpivotingSource(
+            [
+                {"product": "A", "jan": 1, "feb": 2},
+                {"product": "B", "jan": 3, "feb": 4},
+            ],
+            keyatts=("product",),
+            unpivotatts=("jan", "feb"),
+            nameatt="month",
+            valueatt="sales",
+        )
+
+        expected = [
+            {"product": "A", "month": "jan", "sales": 1},
+            {"product": "A", "month": "feb", "sales": 2},
+            {"product": "B", "month": "jan", "sales": 3},
+            {"product": "B", "month": "feb", "sales": 4},
+        ]
+        self.assertEqual(expected, list(source))
+
+    def test_unpivot_with_inferred_attributes(self):
+        source = UnpivotingSource(
+            [
+                {"id": 1, "a": 10, "b": 20},
+            ],
+            keyatts="id",
+        )
+
+        expected = [
+            {"id": 1, "name": "a", "value": 10},
+            {"id": 1, "name": "b", "value": 20},
+        ]
+        self.assertEqual(expected, list(source))
+
+    def test_unpivot_ignoring_none(self):
+        source = UnpivotingSource(
+            [
+                {"id": 1, "a": None, "b": 20},
+            ],
+            keyatts="id",
+            ignorenone=True,
+        )
+
+        expected = [
+            {"id": 1, "name": "b", "value": 20},
+        ]
+        self.assertEqual(expected, list(source))
+
+    def test_invalid_arguments(self):
+        with self.assertRaises(ValueError):
+            UnpivotingSource([], keyatts=("id",), nameatt="name", valueatt="name")
+
+        with self.assertRaises(ValueError):
+            UnpivotingSource([], keyatts=("name",), nameatt="name")
+
+        with self.assertRaises(ValueError):
+            UnpivotingSource([], keyatts=("id",), unpivotatts=("id",))
