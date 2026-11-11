@@ -642,6 +642,9 @@ def keepasis(s):
 
 _defaulttargetconnection = None
 
+# How many statements a ConnectionWrapper with pipelining sends before it waits
+# for the answers
+_PIPELINESYNC = 1000
 
 def getdefaulttargetconnection():
     """Return the default target connection"""
@@ -673,6 +676,7 @@ class ConnectionWrapper(object):
         stmtcachesize=1000,
         paramstyle=None,
         copyintonew=False,
+        pipelining=False,
     ):
         """Create a ConnectionWrapper around the given PEP 249 connection
 
@@ -693,7 +697,26 @@ class ConnectionWrapper(object):
         - copyintonew: A boolean deciding if a new mapping only holding the
           needed arguments should be created when a statement is executed.
           Some drivers require this.
+        - pipelining: A boolean deciding if INSERT, UPDATE, and DELETE
+          statements (without RETURNING) should be sent to the database
+          without waiting for each answer (PostgreSQL pipeline mode, which
+          needs a connection with a pipeline() method, e.g., psycopg 3). The
+          statements are still executed in order in the same transaction.
+          Errors are, however, reported later, when the answers are collected
+          (at the latest by commit()). Any other statement first waits for
+          all answers. Call stoppipeline() before using the connection
+          directly, e.g., for COPY, which cannot be used in pipeline mode.  
         """
+        if pipelining and not hasattr(connection, "pipeline"):
+            raise ValueError(
+                "pipelining needs a connection with pipeline mode, "
+                "e.g., from psycopg 3"
+            )
+        self.__pipelining = bool(pipelining)
+        self.__pipelinectx = None  # the context manager of the open pipeline
+        self.__pipeline = None  # the open pipeline, if any
+        self.__queued = 0  # statements sent since the last sync
+        self.__pipelinable = {}  # statement -> can it be pipelined?
         self.__connection = connection
         self.__cursor = connection.cursor()
         self.nametranslator = lambda s: s
@@ -742,14 +765,57 @@ class ConnectionWrapper(object):
         if self.__translate and translate:
             (stmt, arguments) = self.__translate(stmt, arguments)
 
+        if self.__pipelining and self.__ispipelinable(stmt):
+            if self.__pipeline is None:
+                self.__pipelinectx = self.__connection.pipeline()
+                self.__pipeline = self.__pipelinectx.__enter__()
+        else:
+            self.stoppipeline()
+
         if arguments is None:
             # Some drivers don't accept None for 'arguments'
             self.__cursor.execute(stmt)
         else:
             self.__cursor.execute(stmt, arguments)
 
+        if self.__pipeline is not None:
+            self.__queued += 1
+            if self.__queued >= _PIPELINESYNC:
+                # Collect the answers now and then to bound the memory used
+                self.__queued = 0
+                self.__pipeline.sync()
+
+    def __ispipelinable(self, stmt):
+        # Only statements without results can be sent without waiting: the
+        # cursor of a queued SELECT would look as if it had no result
+        try:
+            return self.__pipelinable[stmt]
+        except KeyError:
+            upper = stmt.lstrip().upper()
+            res = upper.startswith(("INSERT", "UPDATE", "DELETE")) and (
+                "RETURNING" not in upper
+            )
+            if len(self.__pipelinable) > 1000:
+                self.__pipelinable.clear()
+            self.__pipelinable[stmt] = res
+            return res
+
+    def stoppipeline(self):
+        """Wait for the answers to all statements sent in pipeline mode, raise
+        an error if one of them failed, and leave pipeline mode. Does nothing
+        if no statements are waiting. Must be called before the connection is
+        used directly, e.g., for COPY.
+        """
+        context = self.__pipelinectx
+        if context is not None:
+            self.__pipelinectx = None
+            self.__pipeline = None
+            self.__queued = 0
+            context.__exit__(None, None, None)
+
     def executemany(self, stmt, params, translate=True):
         """Execute a sequence of statements."""
+        self.stoppipeline()
         if self.__translate and translate:
             # Idea: Translate the statement for the first parameter set. Then
             # reuse the statement (but create new attribute sequences if
@@ -967,6 +1033,7 @@ class ConnectionWrapper(object):
 
     def commit(self):
         """Commit the transaction."""
+        self.stoppipeline()
         endload()
         self.__connection.commit()
 
@@ -975,10 +1042,17 @@ class ConnectionWrapper(object):
         global _defaulttargetconnection
         if _defaulttargetconnection is self:
             _defaulttargetconnection = None
-        self.__connection.close()
+        try:
+            self.stoppipeline()
+        finally:
+            self.__connection.close()
 
     def rollback(self):
         """Rollback the transaction."""
+        try:
+            self.stoppipeline()
+        except Exception:
+            pass # the transaction is rolled back anyway
         self.__connection.rollback()
 
     def setasdefault(self):
@@ -988,6 +1062,7 @@ class ConnectionWrapper(object):
 
     def cursor(self):
         """Return a cursor object. Optional method."""
+        self.stoppipeline()
         return self.__connection.cursor()
 
     def resultnames(self):
@@ -1001,6 +1076,9 @@ class ConnectionWrapper(object):
         # process), we need to create a new cursor when it is unpickled.
         res = self.__dict__.copy()
         del res["_ConnectionWrapper__cursor"]  # a dirty trick, but...
+        res["_ConnectionWrapper__pipelinectx"] = None  # cannot be pickled
+        res["_ConnectionWrapper__pipeline"] = None
+        res["_ConnectionWrapper__queued"] = 0
         return res
 
     def __setstate__(self, dictdata):
