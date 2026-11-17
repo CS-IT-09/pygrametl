@@ -704,19 +704,25 @@ class ConnectionWrapper(object):
           statements are still executed in order in the same transaction.
           Errors are, however, reported later, when the answers are collected
           (at the latest by commit()). Any other statement first waits for
-          all answers. Call stoppipeline() before using the connection
-          directly, e.g., for COPY, which cannot be used in pipeline mode.  
+          all answers. Call pausepipeline() before using the connection
+          directly, e.g., for COPY, which cannot be used in pipeline mode. 
+          Cannot be used with autocommit. 
         """
         if pipelining and not hasattr(connection, "pipeline"):
             raise ValueError(
                 "pipelining needs a connection with pipeline mode, "
                 "e.g., from psycopg 3"
             )
+        if pipelining and getattr(connection, "autocommit", False):
+            raise ValueError(
+                "pipelining cannot be used with autocommit: statements that "
+                "were already sent cannot be rolled back if a later one fails"
+            )
         self.__pipelining = bool(pipelining)
         self.__pipelinectx = None  # the context manager of the open pipeline
         self.__pipeline = None  # the open pipeline, if any
         self.__queued = 0  # statements sent since the last sync
-        self.__pipelinable = {}  # statement -> can it be pipelined?
+        self.__pipelinable = FIFODict(max(1, stmtcachesize))  # statement -> can it be pipelined?
         self.__connection = connection
         self.__cursor = connection.cursor()
         self.nametranslator = lambda s: s
@@ -770,7 +776,7 @@ class ConnectionWrapper(object):
                 self.__pipelinectx = self.__connection.pipeline()
                 self.__pipeline = self.__pipelinectx.__enter__()
         else:
-            self.stoppipeline()
+            self.pausepipeline()
 
         if arguments is None:
             # Some drivers don't accept None for 'arguments'
@@ -795,16 +801,15 @@ class ConnectionWrapper(object):
             res = upper.startswith(("INSERT", "UPDATE", "DELETE")) and (
                 "RETURNING" not in upper
             )
-            if len(self.__pipelinable) > 1000:
-                self.__pipelinable.clear()
             self.__pipelinable[stmt] = res
             return res
 
-    def stoppipeline(self):
+    def pausepipeline(self):
         """Wait for the answers to all statements sent in pipeline mode, raise
-        an error if one of them failed, and leave pipeline mode. Does nothing
-        if no statements are waiting. Must be called before the connection is
-        used directly, e.g., for COPY.
+        an error if one of them failed, and leave pipeline mode. Pipeline mode
+        starts again automatically with the next INSERT, UPDATE or DELETE.
+        Does nothing if no statements are waiting. Must be called before the
+        connection is used directly, e.g., for COPY.
         """
         context = self.__pipelinectx
         if context is not None:
@@ -815,7 +820,7 @@ class ConnectionWrapper(object):
 
     def executemany(self, stmt, params, translate=True):
         """Execute a sequence of statements."""
-        self.stoppipeline()
+        self.pausepipeline()
         if self.__translate and translate:
             # Idea: Translate the statement for the first parameter set. Then
             # reuse the statement (but create new attribute sequences if
@@ -1033,8 +1038,8 @@ class ConnectionWrapper(object):
 
     def commit(self):
         """Commit the transaction."""
-        self.stoppipeline()
         endload()
+        self.pausepipeline()
         self.__connection.commit()
 
     def close(self):
@@ -1043,14 +1048,14 @@ class ConnectionWrapper(object):
         if _defaulttargetconnection is self:
             _defaulttargetconnection = None
         try:
-            self.stoppipeline()
+            self.pausepipeline()
         finally:
             self.__connection.close()
 
     def rollback(self):
         """Rollback the transaction."""
         try:
-            self.stoppipeline()
+            self.pausepipeline()
         except Exception:
             pass # the transaction is rolled back anyway
         self.__connection.rollback()
@@ -1062,7 +1067,7 @@ class ConnectionWrapper(object):
 
     def cursor(self):
         """Return a cursor object. Optional method."""
-        self.stoppipeline()
+        self.pausepipeline()
         return self.__connection.cursor()
 
     def resultnames(self):

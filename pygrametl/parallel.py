@@ -1067,9 +1067,9 @@ class SharedConnectionWrapperServer(object):
             elif method.startswith("_userfunc_"):
                 # A user function, e.g., a bulk loader using COPY, can use the
                 # connection directly, which is not possible in pipeline mode
-                stoppipeline = getattr(self.__wrapped, "stoppipeline", None)
-                if stoppipeline is not None:
-                    stoppipeline()
+                pausepipeline = getattr(self.__wrapped, "pausepipeline", None)
+                if pausepipeline is not None:
+                    pausepipeline()
                 target = getattr(self, method)
                 target(*args)
                 self.__toclients[client].put("USERFUNC")
